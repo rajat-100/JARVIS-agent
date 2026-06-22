@@ -46,9 +46,15 @@ type Message = {
   text: string;
 };
 
+type MemoryRecord = {
+  id: string;
+  category: string;
+  content: string;
+};
+
 const quickPrompts = [
-  'Plan my day',
-  'Remember an idea',
+  'What do you know about me?',
+  'Remember that I prefer voice-first replies',
   'Summarize my goals',
   'Check priorities',
 ];
@@ -77,7 +83,12 @@ const Home: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [voiceError, setVoiceError] = useState('');
+  const [memories, setMemories] = useState<MemoryRecord[]>([]);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState('');
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const selectedVoiceNameRef = useRef('');
 
   const currentTime = useMemo(
     () =>
@@ -88,6 +99,16 @@ const Home: React.FC = () => {
     []
   );
 
+  const refreshMemories = async () => {
+    try {
+      const response = await fetch('/api/memory');
+      const data = await response.json();
+      setMemories(data.memories || []);
+    } catch {
+      setVoiceError('Memory is not available yet.');
+    }
+  };
+
   const speak = (text: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       return;
@@ -96,6 +117,15 @@ const Home: React.FC = () => {
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
+    const selectedVoice = voicesRef.current.find(
+      (voice) => voice.name === selectedVoiceNameRef.current
+    );
+
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+      utterance.lang = selectedVoice.lang;
+    }
+
     utterance.rate = 0.95;
     utterance.pitch = 0.85;
     utterance.volume = 1;
@@ -132,6 +162,10 @@ const Home: React.FC = () => {
       const data = await response.json();
       const reply = data.reply || 'I heard you, but I do not have a response yet.';
 
+      if (typeof data.memoryCount === 'number') {
+        void refreshMemories();
+      }
+
       setMessages((currentMessages) => [
         ...currentMessages,
         {
@@ -160,6 +194,31 @@ const Home: React.FC = () => {
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
+    }
+
+    void refreshMemories();
+
+    if ('speechSynthesis' in window) {
+      const loadVoices = () => {
+        const availableVoices = window.speechSynthesis.getVoices();
+        voicesRef.current = availableVoices;
+        setVoices(availableVoices);
+
+        const savedVoiceName = window.localStorage.getItem('jarvis-voice-name');
+        const preferredVoice =
+          availableVoices.find((voice) => voice.name === savedVoiceName) ||
+          availableVoices.find((voice) => voice.lang.toLowerCase().startsWith('en-in')) ||
+          availableVoices.find((voice) => voice.lang.toLowerCase().startsWith('en')) ||
+          availableVoices[0];
+
+        if (preferredVoice) {
+          selectedVoiceNameRef.current = preferredVoice.name;
+          setSelectedVoiceName(preferredVoice.name);
+        }
+      };
+
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
     }
 
     const SpeechRecognition =
@@ -210,6 +269,7 @@ const Home: React.FC = () => {
     return () => {
       recognition.stop();
       window.speechSynthesis?.cancel();
+      window.speechSynthesis.onvoiceschanged = null;
     };
   }, []);
 
@@ -239,6 +299,26 @@ const Home: React.FC = () => {
   const stopSpeaking = () => {
     window.speechSynthesis?.cancel();
     setIsSpeaking(false);
+  };
+
+  const handleVoiceChange = (voiceName: string) => {
+    selectedVoiceNameRef.current = voiceName;
+    setSelectedVoiceName(voiceName);
+    window.localStorage.setItem('jarvis-voice-name', voiceName);
+
+    const previewVoice = voices.find((voice) => voice.name === voiceName);
+    if (previewVoice) {
+      window.speechSynthesis?.cancel();
+      const utterance = new SpeechSynthesisUtterance('Voice profile updated.');
+      utterance.voice = previewVoice;
+      utterance.lang = previewVoice.lang;
+      utterance.rate = 0.95;
+      utterance.pitch = 0.85;
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(utterance);
+    }
   };
 
   return (
@@ -283,12 +363,30 @@ const Home: React.FC = () => {
               Stop voice
             </button>
           ) : null}
+
+          <label className="voice-picker">
+            <span>Voice</span>
+            <select
+              value={selectedVoiceName}
+              onChange={(event) => handleVoiceChange(event.target.value)}
+            >
+              {voices.length === 0 ? (
+                <option value="">System default</option>
+              ) : (
+                voices.map((voice) => (
+                  <option key={`${voice.name}-${voice.lang}`} value={voice.name}>
+                    {voice.name} ({voice.lang})
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
         </section>
 
         <section className="metrics-grid" aria-label="Agent modules">
           <article>
             <span>Memory</span>
-            <strong>12</strong>
+            <strong>{memories.length}</strong>
           </article>
           <article>
             <span>Tasks</span>
@@ -307,6 +405,14 @@ const Home: React.FC = () => {
               <h3>Recent voice exchange</h3>
             </div>
           </div>
+
+          {memories.length > 0 ? (
+            <div className="memory-strip" aria-label="Recent memories">
+              {memories.slice(0, 3).map((memory) => (
+                <span key={memory.id}>{memory.content}</span>
+              ))}
+            </div>
+          ) : null}
 
           <div className="chat-list">
             {messages.map((message) => (
