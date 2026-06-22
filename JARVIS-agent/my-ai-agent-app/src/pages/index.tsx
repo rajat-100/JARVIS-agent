@@ -89,6 +89,7 @@ const Home: React.FC = () => {
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const selectedVoiceNameRef = useRef('');
+  const apiAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const currentTime = useMemo(
     () =>
@@ -109,7 +110,7 @@ const Home: React.FC = () => {
     }
   };
 
-  const speak = (text: string) => {
+  const speakWithBrowserVoice = (text: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       return;
     }
@@ -134,6 +135,50 @@ const Home: React.FC = () => {
     utterance.onerror = () => setIsSpeaking(false);
 
     window.speechSynthesis.speak(utterance);
+  };
+
+  const speak = async (text: string) => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.speechSynthesis?.cancel();
+    apiAudioRef.current?.pause();
+
+    try {
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.ok || !contentType.includes('audio')) {
+        throw new Error('API voice unavailable');
+      }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      apiAudioRef.current = audio;
+
+      audio.onplay = () => setIsSpeaking(true);
+      audio.onended = () => {
+        setIsSpeaking(false);
+        URL.revokeObjectURL(audioUrl);
+      };
+      audio.onerror = () => {
+        setIsSpeaking(false);
+        URL.revokeObjectURL(audioUrl);
+        speakWithBrowserVoice(text);
+      };
+
+      await audio.play();
+    } catch {
+      speakWithBrowserVoice(text);
+    }
   };
 
   const sendVoiceMessage = async (transcript: string) => {
@@ -174,7 +219,7 @@ const Home: React.FC = () => {
           text: reply,
         },
       ]);
-      speak(reply);
+      void speak(reply);
     } catch {
       const fallbackReply =
         'I could not reach my local reasoning layer yet, but my voice interface is ready.';
@@ -187,7 +232,7 @@ const Home: React.FC = () => {
           text: fallbackReply,
         },
       ]);
-      speak(fallbackReply);
+      void speak(fallbackReply);
     }
   };
 
@@ -268,6 +313,7 @@ const Home: React.FC = () => {
 
     return () => {
       recognition.stop();
+      apiAudioRef.current?.pause();
       window.speechSynthesis?.cancel();
       window.speechSynthesis.onvoiceschanged = null;
     };
@@ -290,6 +336,7 @@ const Home: React.FC = () => {
     }
 
     window.speechSynthesis?.cancel();
+    apiAudioRef.current?.pause();
     setIsSpeaking(false);
     setDraftTranscript('');
     recognition.start();
@@ -297,6 +344,7 @@ const Home: React.FC = () => {
   };
 
   const stopSpeaking = () => {
+    apiAudioRef.current?.pause();
     window.speechSynthesis?.cancel();
     setIsSpeaking(false);
   };
@@ -365,7 +413,7 @@ const Home: React.FC = () => {
           ) : null}
 
           <label className="voice-picker">
-            <span>Voice</span>
+            <span>Fallback voice</span>
             <select
               value={selectedVoiceName}
               onChange={(event) => handleVoiceChange(event.target.value)}
