@@ -1,0 +1,30 @@
+{
+  "name": "my-ai-agent-app",
+  "version": "1.0.0",
+  "description": "A personal AI agent application similar to JARVIS.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "keywords": [
+    "AI",
+    "agent",
+    "personal",
+    "JARVIS",
+    "Next.js"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "@types/react": "latest",
+    "@types/node": "latest"
+  }
+}
